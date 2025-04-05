@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
+ <g transform="translate(0,0) scale(4)">
+    <rect width="100" height="100" fill="#000000" rx="10"/>
+    <text x="30" y="55" fill="#FF5F1F" font-family="monospace" font-size="16">
+      >
+      <tspan>_</tspan>
+      <animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite"/>
+    </text>
+    <!-- Loading progress line -->
+    <line x1="45" y1="52" x2="75" y2="52" stroke="#FF5F1F" stroke-width="2">
+      <animate attributeName="stroke-dasharray"
+               values="0,30;30,30"
+               dur="2s"
+               repeatCount="indefinite"/>
+    </line>
+  </g>
+  </svg>

@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 100">
+  <defs>
+    <!-- Glow filter -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <!-- Gradient for text effect -->
+    <linearGradient id="textGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#FF5F1F"/>
+      <stop offset="100%" style="stop-color:#FF7F4F"/>
+      <animate attributeName="x1" values="0%;100%;0%" dur="4s" repeatCount="indefinite" 
+               calcMode="spline" keySplines="0.4 0 0.2 1; 0.4 0 0.2 1"/>
+      <animate attributeName="x2" values="100%;200%;100%" dur="4s" repeatCount="indefinite"
+               calcMode="spline" keySplines="0.4 0 0.2 1; 0.4 0 0.2 1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background with scanline effect -->
+  <rect width="300" height="100" fill="#000000" rx="10"/>
+  
+  <!-- Subtle scan line -->
+  <rect width="300" height="2" fill="#FF5F1F" opacity="0.1">
+    <animate attributeName="y" 
+             values="0;100;0" 
+             dur="4s" 
+             repeatCount="indefinite"
+             calcMode="spline"
+             keySplines="0.4 0 0.2 1; 0.4 0 0.2 1"/>
+  </rect>
+
+  <!-- Code brackets with typing effect -->
+  <g transform="translate(40,35)">
+    <!-- Left bracket -->
+    <path d="M0 0 L10 0 L10 30 L0 30" 
+          stroke="#FF5F1F" 
+          stroke-width="3" 
+          fill="none" 
+          filter="url(#glow)">
+      <animate attributeName="stroke-dasharray"
+               values="0,100;70,100;70,100"
+               dur="1.5s"
+               fill="freeze"
+               calcMode="spline"
+               keySplines="0.4 0 0.2 1; 0.4 0 0.2 1"/>
+    </path>
+    
+    <!-- Right bracket -->
+    <path d="M25 0 L15 15 L25 30" 
+          stroke="#FF5F1F" 
+          stroke-width="3" 
+          fill="none" 
+          filter="url(#glow)">
+      <animate attributeName="stroke-dasharray"
+               values="0,100;50,100;50,100"
+               dur="1.5s"
+               begin="0.5s"
+               fill="freeze"
+               calcMode="spline"
+               keySplines="0.4 0 0.2 1; 0.4 0 0.2 1"/>
+    </path>
+  </g>
+
+  <!-- Main text with gradient effect -->
+  <text x="80" y="60" 
+        font-family="Arial, sans-serif" 
+        font-weight="bold" 
+        font-size="32" 
+        fill="white"
+        filter="url(#glow)">
+    <!-- Animated text appearing -->
+    <tspan>
+      Code
+      <animate attributeName="fill-opacity"
+               values="0;1;1"
+               dur="1s"
+               begin="1s"
+               fill="freeze"
+               calcMode="spline"
+               keySplines="0.4 0 0.2 1; 0.4 0 0.2 1"/>
+    </tspan>
+    <tspan fill="url(#textGradient)">
+      It
+      <animate attributeName="fill-opacity"
+               values="0;1;1"
+               dur="1s"
+               begin="1.5s"
+               fill="freeze"
+               calcMode="spline"
+               keySplines="0.4 0 0.2 1; 0.4 0 0.2 1"/>
+    </tspan>
+  </text>
+
+  <!-- Terminal line effect -->
+  <g transform="translate(220,45)">
+    <!-- Command prompt symbol -->
+    <text x="-15" y="5" 
+          font-family="monospace" 
+          fill="#FF5F1F" 
+          font-size="14"
+          opacity="0">
+      >_
+      <animate attributeName="opacity"
+               values="0;1;1"
+               dur="0.5s"
+               begin="2s"
+               fill="freeze"
+               calcMode="spline"
+               keySplines="0.4 0 0.2 1; 0.4 0 0.2 1"/>
+    </text>
+    <!-- Blinking cursor -->
+    <rect width="10" height="3" 
+          fill="#FF5F1F" 
+          filter="url(#glow)">
+      <animate attributeName="opacity"
+               values="1;0;1"
+               dur="1s"
+               begin="2s"
+               repeatCount="indefinite"
+               calcMode="spline"
+               keySplines="0.4 0 0.2 1; 0.4 0 0.2 1"/>
+    </rect>
+  </g>
+
+  <!-- Subtle corner accents -->
+  <circle cx="10" cy="10" r="2" fill="#FF5F1F" opacity="0.5">
+    <animate attributeName="opacity"
+             values="0.5;0.2;0.5"
+             dur="3s"
+             repeatCount="indefinite"
+             calcMode="spline"
+             keySplines="0.4 0 0.2 1; 0.4 0 0.2 1"/>
+  </circle>
+  <circle cx="290" cy="90" r="2" fill="#FF5F1F" opacity="0.5">
+    <animate attributeName="opacity"
+             values="0.5;0.2;0.5"
+             dur="3s"
+             repeatCount="indefinite"
+             calcMode="spline"
+             keySplines="0.4 0 0.2 1; 0.4 0 0.2 1"
+             begin="1.5s"/>
+  </circle>
+</svg>
