@@ -4,6 +4,7 @@ import ApolloWrapper from "@/components/providers/apolloWrapper";
 import UserProvider from "@/lib/provider/UserProvider";
 import { Toaster } from "@/components/ui/sonner";
 import SocketProvider from "@/lib/provider/SocketProvider";
+import PeerProvider from "@/lib/provider/PeerProvider";
 
 export const metadata: Metadata = {
   title: "codeIt",
@@ -21,8 +22,10 @@ export default async function RootLayout({
         <ApolloWrapper>
           <UserProvider>
             <SocketProvider>
+            <PeerProvider>
             <main>{children}</main>
             <Toaster />
+            </PeerProvider>
             </SocketProvider>
           </UserProvider>
         </ApolloWrapper>

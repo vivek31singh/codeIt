@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Play, UserPlus2 } from "lucide-react";
+import { EllipsisVertical, Play, UserPlus2 } from "lucide-react";
 import gql from "graphql-tag";
 import { useMutation } from "@apollo/client";
 import { supabase } from "@/lib/supabase/supabaseClient";
@@ -24,9 +24,11 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 
+import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/react";
+import { EllipsisVerticalIcon } from "@heroicons/react/20/solid";
+
 // inivite functionality imports
 import { toast } from "sonner";
-import * as Y from "yjs";
 
 // websocket
 import AnimatedTooltip from "@/components/reusable/animatedTooltip";
@@ -34,6 +36,12 @@ import { useRouter } from "next/navigation";
 import { useSocket } from "@/lib/store/useSocket";
 import Image from "next/image";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { usePeer } from "@/lib/store/usePeer";
+
+// code sharing imports
+import { yText, awareness } from "@/lib/webrtc/setupYjsSync";
+import { MonacoBinding } from "y-monaco";
+
 // import Image from "next/image";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
@@ -49,27 +57,17 @@ const RUNCODE = gql`
   }
 `;
 
-const ydoc = new Y.Doc();
-const yText = ydoc.getText("monaco");
-// const provider = new WebrtcProvider("monaco-room", ydoc, {
-//   signaling: ["ws://localhost:5555"], // Alternative signaling server
-// });
-
-// provider.on("status", (event) => {
-//   console.log("WebRTC status:", event.connected); // "connected" or "disconnected"
-// });
-
-// const awareness = provider.awareness; // Enable WebRTC awareness
-
-// awareness.on("change", () => {
-//   console.log("Awareness state changed:", Array.from(awareness.getStates().values()));
-// });
-
 interface Member {
   fullname: string;
   profileImg: string;
   socketId: string;
   userId: string;
+}
+
+interface WaitingMember
+  extends Pick<Member, "fullname" | "profileImg" | "userId"> {
+  user: string;
+  roomId: string;
 }
 
 const Page = ({ params }: { params: { slug: string[] } }) => {
@@ -83,8 +81,11 @@ const Page = ({ params }: { params: { slug: string[] } }) => {
   const [roomId, setRoomId] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [roomMembers, setRoomMembers] = useState<Member[]>([]);
-  const [waitingRoomMembers, setWaitingRoomMembers] = useState<Member[]>([]);
-const [selectedMembersList, setSelectedMembersList] = useState("joinedMemberList");
+  const [waitingRoomMembers, setWaitingRoomMembers] = useState<WaitingMember[]>(
+    []
+  );
+  const [selectedMembersList, setSelectedMembersList] =
+    useState("joinedMemberList");
   useEffect(() => {
     (async function () {
       const { slug } = (await params) ?? [];
@@ -92,66 +93,75 @@ const [selectedMembersList, setSelectedMembersList] = useState("joinedMemberList
         return;
       }
 
-      if (!user) {
-        router.push("/login");
-        return;
-      }
       setRoomId(slug[0] || "");
       setInviteCode(slug[1] || "");
     })();
   }, [params, user, router]);
 
-  const acceptInvite = ({
-    userId,
-    roomId,
-  }: {
-    userId: string;
-    roomId: string;
-  }) => {
-    if (!socket) return;
+  // WEBRTC CODE
 
-    socket?.emit(
-      "EVENT",
-      {
-        type: "ACCEPT_JOIN_REQUEST",
-        payload: {
-          userId,
-          roomId,
+  const { createOffer, setAnswer, addIceCandidate } = usePeer();
+
+  const acceptInvite = useCallback(
+    async ({ userId, roomId }: { userId: string; roomId: string }) => {
+      if (!socket || !user) return;
+
+      const offer = await createOffer({
+        from: user.userId,
+        to: userId,
+        roomId,
+        socket,
+      });
+
+      socket?.emit(
+        "EVENT",
+        {
+          type: "ACCEPT_JOIN_REQUEST",
+          payload: {
+            userId,
+            roomId,
+            offer,
+          },
         },
-      },
-      ({ message }: { message: string }) => {
-        console.log("accept response", message);
-      }
-    );
-  };
+        ({ message }: { message: string }) => {
+          console.log("accept response", message);
+        }
+      );
+    },
+    [socket, user, createOffer]
+  );
 
-  const declineInvite = ({
-    userId,
-    roomId,
-  }: {
-    userId: string;
-    roomId: string;
-  }) => {
-    if (!socket) return;
+  const declineInvite = useCallback(
+    ({ userId, roomId }: { userId: string; roomId: string }) => {
+      if (!socket) return;
 
-    socket?.emit(
-      "EVENT",
-      {
-        type: "REJECT_JOIN_REQUEST",
-        payload: {
-          userId,
-          roomId,
+      socket?.emit(
+        "EVENT",
+        {
+          type: "REJECT_JOIN_REQUEST",
+          payload: {
+            userId,
+            roomId,
+          },
         },
-      },
-      ({ message }: { message: string }) => {
-        console.log("decline response", message);
-      }
-    );
-  };
+        ({
+          message,
+          waitingRoom,
+        }: {
+          message: string;
+          waitingRoom: WaitingMember[];
+        }) => {
+          console.log("decline response", message);
+          setWaitingRoomMembers(waitingRoom);
+        }
+      );
+    },
+    [socket]
+  );
 
   useEffect(() => {
     if (!socket) return;
-    socket?.on("EVENT", ({ type, payload }) => {
+    socket?.on("EVENT", async ({ type, payload }) => {
       switch (type) {
         case "SEND_JOIN_REQUEST":
           const { userId, fullname, profileImg, waitingRoom, roomId } = payload;
@@ -199,8 +209,6 @@ const [selectedMembersList, setSelectedMembersList] = useState("joinedMemberList
                 <button
                   className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition"
                   onClick={() => {
-                    console.log("accept clicked for user", user);
-
                     acceptInvite({ userId, roomId });
                   }}
                 >
@@ -213,27 +221,73 @@ const [selectedMembersList, setSelectedMembersList] = useState("joinedMemberList
           break;
 
         case "UPDATED_ROOM_MEMBERS":
-          const { message, roomMembers } = payload;
+          const { message, roomMembers, updatedWaitingRoomMembers } = payload;
           if (message === "Updated room members successfully") {
             setRoomMembers(roomMembers);
+            console.log(
+              "updated waiting room members",
+              updatedWaitingRoomMembers
+            );
+            setWaitingRoomMembers(updatedWaitingRoomMembers);
           }
           break;
 
+        case "INCOMING_ANSWER":
+          const { answer } = payload;
+
+          if (!answer) {
+            return;
+          }
+
+          await setAnswer(answer);
+
+          break;
+
+        case "USER_CANDIDATE":
+          const { candidate } = payload;
+
+          if (!candidate) {
+            return;
+          }
+
+          await addIceCandidate(candidate);
+          break;
         default:
           break;
       }
     });
 
     return () => {
-      socket.off("EVENT"); // Clean up
+      socket.off("EVENT");
     };
-  }, [socket, user]);
+  }, [socket, user, acceptInvite, declineInvite, setAnswer, addIceCandidate]);
 
   useEffect(() => {
     if (!socket) {
       return;
     }
-    if (roomId) {
+    if (roomId && user?.userId) {
+      socket.emit(
+        "EVENT",
+        {
+          type: "REFRESH_SOCKET_ID",
+          payload: {
+            roomId,
+            userId: user?.userId,
+          },
+        },
+        ({
+          message,
+          waitingRoom,
+        }: {
+          message: string;
+          waitingRoom: WaitingMember[];
+        }) => {
+          if (message === "Socket ID refreshed successfully") {
+            setWaitingRoomMembers(waitingRoom);
+          }
+        }
+      );
       socket.emit(
         "EVENT",
         {
@@ -255,205 +309,7 @@ const [selectedMembersList, setSelectedMembersList] = useState("joinedMemberList
         }
       );
     }
-  }, [socket, roomId]);
-
-  // useEffect(() => {
-  //   const timeout = setTimeout(() => {
-  //     if (!user) {
-  //       router.push("/login");
-  //     }
-  //   }, 6000);
-
-  //   return () => clearTimeout(timeout);
-  // }, [user, router]);
-
-  // -----------------------------------------------------------------------
-  // websocket
-  // const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_WSS_URL;
-
-  // const [socket, setSocket] = useState<Socket | null>(null);
-  // const [members, setMembers] = useState<Member[] | null>(null);
-
-  //   useEffect(() => {
-  //     const newSocket = io(SOCKET_SERVER_URL, { autoConnect: true });
-  //     setSocket(newSocket);
-
-  //     newSocket.on("connect", () => {
-  //       newSocket.emit("JOIN", {
-  //         userId: user?.userId,
-  //         username: user?.fullName,
-  //         profileImg: user?.profileImg,
-  //         room: roomId,
-  //       });
-
-  //       newSocket.on("NEW_USER_JOINED", ({ members, newUser, admin }) => {
-  //         setMembers(members);
-  //         if (
-  //           admin?.userId === user?.userId &&
-  //           admin?.username &&
-  //           admin?.profileImg
-  //         ) {
-  //           toast(
-  //             <div className="flex flex-col space-y-3 p-3">
-  //               <div className="flex items-start justify-between space-x-3">
-  //                 {/* Image on the left */}
-  //                 {members.length === 1 ? (
-  //                   <>
-  //                     {admin?.profileImg && (
-  //                       <Image
-  //                         src={
-  //                           admin?.profileImg ||
-  //                           `https://placehold.co/600x400?text=${
-  //                             admin?.username?.charAt(0) || "U"
-  //                           }`
-  //                         }
-  //                         alt="admin"
-  //                         width={40}
-  //                         height={40}
-  //                         className="w-12 h-12 rounded-full object-cover border border-gray-300"
-  //                       />
-  //                     )}
-  //                     {/* Text Content */}
-  //                     <div className="flex-1 text-left">
-  //                       <p className="text-sm font-medium">
-  //                         {`Welcome ${
-  //                           user?.fullName || "Coder"
-  //                         }! Invite friends to the playground.`}
-  //                       </p>
-  //                       <p className="text-xs text-gray-600">
-  //                         Share the invite link with friends or collaborators.
-  //                       </p>
-  //                     </div>
-  //                   </>
-  //                 ) : (
-  //                   <>
-  //                     {newUser?.profileImg && (
-  //                       <Image
-  //                         src={
-  //                           newUser?.profileImg ||
-  //                           `https://placehold.co/600x400?text=${
-  //                             admin?.username?.charAt(0) || "U"
-  //                           }`
-  //                         }
-  //                         alt="newUser"
-  //                         width={40}
-  //                         height={40}
-  //                         className="w-12 h-12 rounded-full object-cover border border-gray-300"
-  //                       />
-  //                     )}
-  //                     {/* Text Content */}
-  //                     <div className="flex-1 text-left">
-  //                       <p className="text-sm font-medium">
-  //                         {newUser?.username || "User"} wants to join!
-  //                       </p>
-  //                       <p className="text-xs text-gray-600">
-  //                         {newUser?.username || "User"} wants to join the
-  //                         playground! Do you accept?
-  //                       </p>
-  //                     </div>
-  //                   </>
-  //                 )}
-  //               </div>
-
-  //               {/* Buttons Section */}
-  //               {user?.userId !== newUser?.userId && (
-  //                 <div className="flex justify-end space-x-3">
-  //                   <button
-  //                     className="px-3 py-1 text-xs font-medium bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition"
-  //                     onClick={() => {}}
-  //                   >
-  //                     Decline
-  //                   </button>
-  //                   <button
-  //                     className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition"
-  //                     onClick={() => {}}
-  //                   >
-  //                     Accept
-  //                   </button>
-  //                 </div>
-  //               )}
-  //             </div>
-  //           );
-  //         } else {
-  //           toast.info(
-  //             <div className="flex flex-col space-y-3 p-2">
-  //               <div className="flex items-center text-primary">
-  //                 <div className="w-full flex flex-col items-start justify-center">
-  //                   <p className="text-sm font-medium">
-  //                     {user?.userId === newUser?.userId && members.length === 1
-  //                       ? `Welcome ${
-  //                           user?.fullName || "coder"
-  //                         }! Invite friends or collaborators to the playground.`
-  //                       : `
-  // ${newUser?.username || "New user"} wants to join!
-  // `}
-  //                   </p>
-  //                   <p className="text-xs font-medium">
-  //                     {user?.userId === newUser?.userId
-  //                       ? "Share the invite link with friends or collaborators to join the playground."
-  //                       : `  ${newUser?.username || "New user"} wants to join the
-  //                   playground! Do you accept?`}
-  //                   </p>
-  //                 </div>
-  //               </div>
-  //               {user?.userId !== newUser?.userId && (
-  //                 <div className="flex justify-end space-x-2">
-  //                   <button
-  //                     className="px-3 py-1 text-xs font-medium bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition-colors"
-  //                     onClick={() => {
-  //                       // toast.dismiss();
-  //                       // newSocket.emit("DECLINE_NEW_USER", {
-  //                       //   userId: newUser?.userId,
-  //                       //   room: roomId,
-  //                       // });
-  //                     }}
-  //                   >
-  //                     Decline
-  //                   </button>
-  //                   <button
-  //                     className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
-  //                     onClick={() => {
-  //                       // toast.dismiss();
-  //                       // newSocket.emit("ACCEPT_NEW_USER", {
-  //                       //   userId: newUser?.userId,
-  //                       //   room: roomId,
-  //                       // });
-  //                     }}
-  //                   >
-  //                     Accept
-  //                   </button>
-  //                 </div>
-  //               )}
-  //             </div>
-  //           );
-  //         }
-  //       });
-  //     });
-
-  //     // ✅ Listen for messages in the room
-  //     newSocket.on("RECEIVE_MESSAGE", ({ sender, message }) => {
-  //       // setMessages((prev) => [...prev, { sender, message }]);
-  //       console.log(`Message from ${sender}: ${message}`);
-  //     });
-
-  //     newSocket.on("disconnect", () => {
-  //       console.log("Disconnected from server");
-  //     });
-
-  //     return () => {
-  //       newSocket.disconnect();
-  //     };
-  //   }, [user, SOCKET_SERVER_URL, roomId]);
-
-  //   members?.map((member) => console.log("members old one", member?.userId));
-
-  //   socket?.emit("SEND_MESSAGE", {
-  //     room: roomId,
-  //     message: "Hello Room!",
-  //     sender: user?.fullName,
-  //   });
-
-  // -----------------------------------------------------------------------
+  }, [socket, roomId, user?.userId]);
 
   const [runCode] = useMutation(RUNCODE);
   const [loading, setLoading] = useState(false);
@@ -461,7 +317,10 @@ const [selectedMembersList, setSelectedMembersList] = useState("joinedMemberList
   const [error, setError] = useState("");
 
   const [code, setCode] = useState(yText.toString());
+
   const [selectedLanguage, setSelectedLanguage] = useState("typescript");
+
+  // CODE SHARING LOGIC
 
   // ✅ Load saved code from localStorage & update Yjs
   useEffect(() => {
@@ -474,10 +333,24 @@ const [selectedMembersList, setSelectedMembersList] = useState("joinedMemberList
   }, []);
 
   // ✅ Sync Monaco Editor when Yjs updates
+
   useEffect(() => {
-    const updateEditor = () => setCode(yText.toString());
-    yText.observe(updateEditor);
-    return () => yText.unobserve(updateEditor);
+    setCode(yText.toString());
+  }, []);
+
+  useEffect(() => {
+    const observer = () => {
+      const updatedText = yText.toString();
+      console.log("📝 updated code", updatedText);
+      setCode(updatedText);
+    };
+
+    yText.observe(observer);
+
+    return () => {
+      yText.unobserve(observer);
+      console.log("🔁 yText observer cleaned up");
+    };
   }, []);
 
   const handleRunCode = async () => {
@@ -505,6 +378,56 @@ const [selectedMembersList, setSelectedMembersList] = useState("joinedMemberList
 
     setLoading(false);
   };
+
+  const ActionMenu = ({ member }: { member: WaitingMember }) => {
+    return (
+      <Menu as="div" className="relative inline-block text-left">
+        <div>
+          <MenuButton className="flex items-center rounded-full bg-gray-100 text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-100">
+            <span className="sr-only">Open options</span>
+            <EllipsisVerticalIcon aria-hidden="true" className="size-5" />
+          </MenuButton>
+        </div>
+
+        <MenuItems
+          transition
+          className="absolute right-0 z-10 mt-2 w-56 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black/5 transition focus:outline-none data-[closed]:scale-95 data-[closed]:transform data-[closed]:opacity-0 data-[enter]:duration-100 data-[leave]:duration-75 data-[enter]:ease-out data-[leave]:ease-in"
+        >
+          <div className="py-1">
+            <MenuItem>
+              <a
+                href="#"
+                className="block px-4 py-2 text-sm text-gray-700 data-[focus]:bg-gray-100 data-[focus]:text-gray-900 data-[focus]:outline-none"
+                onClick={() => {
+                  acceptInvite({
+                    userId: member?.userId,
+                    roomId: member?.roomId,
+                  });
+                }}
+              >
+                Accept Invite
+              </a>
+            </MenuItem>
+            <MenuItem>
+              <a
+                href="#"
+                className="block px-4 py-2 text-sm text-gray-700 data-[focus]:bg-gray-100 data-[focus]:text-gray-900 data-[focus]:outline-none"
+                onClick={() =>
+                  declineInvite({
+                    userId: member?.userId,
+                    roomId: member?.roomId,
+                  })
+                }
+              >
+                Decline Invite
+              </a>
+            </MenuItem>
+          </div>
+        </MenuItems>
+      </Menu>
+    );
+  };
+
   return (
     <motion.main
       initial={{ x: -100, opacity: 0 }}
@@ -551,22 +474,55 @@ const [selectedMembersList, setSelectedMembersList] = useState("joinedMemberList
             <SheetContent>
               <SheetHeader>
                 <SheetTitle>Room Members</SheetTitle>
-                {/* <SheetDescription>
-                  This sheet shows all the users that have joined the room as well as the users that are waiting to be joined in the waiting room.
-                </SheetDescription> */}
+            
                 <>
                   <main className="flex items-center justify-start w-full border-b space-x-2">
-                    <h6 className="py-4 text-sm capitalize cursor-pointer text-text-primary" onClick={()=> setSelectedMembersList("joinedMemberList")}>
+                    <h6
+                      className="py-4 text-sm capitalize cursor-pointer text-text-primary"
+                      onClick={() => setSelectedMembersList("joinedMemberList")}
+                    >
                       joined members
                     </h6>
-                    <h6 className="py-4 text-sm capitalize cursor-pointer text-text-primary" onClick={()=> setSelectedMembersList("waitingList")}>
+                    <h6
+                      className="py-4 text-sm capitalize cursor-pointer text-text-primary"
+                      onClick={() => setSelectedMembersList("waitingList")}
+                    >
                       waiting list
                     </h6>
                   </main>
 
                   <ul className="flex flex-col items-center justify-center w-full">
-                    { selectedMembersList === "joinedMemberList" && roomMembers.length ?
-                      roomMembers.map((member) => (
+                    {selectedMembersList === "joinedMemberList" &&
+                    roomMembers.length ? (
+                      roomMembers.map((member, index) => (
+                        <li
+                          key={member.userId ?? index}
+                          className="border-b w-full flex items-center justify-between"
+                        >
+                          <div className="flex items-center justify-center space-x-2 py-2">
+                            <Avatar>
+                              <AvatarImage src={member?.profileImg} />
+                              <AvatarFallback>
+                                {member?.fullname?.charAt(0) || "U"}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="flex flex-col items-center justify-center">
+                              <p className="shrink-0 text-sm p-2">
+                                {member?.fullname}
+                              </p>
+                            </div>
+                          </div>
+                          <EllipsisVertical
+                            size={22}
+                            onClick={() => {
+                              console.log("clicked", member);
+                            }}
+                          />
+                        </li>
+                      ))
+                    ) : selectedMembersList === "waitingList" &&
+                      waitingRoomMembers?.length ? (
+                      waitingRoomMembers?.map((member) => (
                         <li
                           key={member.userId}
                           className="border-b w-full flex items-center justify-between"
@@ -584,29 +540,12 @@ const [selectedMembersList, setSelectedMembersList] = useState("joinedMemberList
                               </p>
                             </div>
                           </div>
-                          <p>actions</p>
+                          <ActionMenu member={member} />
                         </li>
-                      )): selectedMembersList === "waitingList" && waitingRoomMembers.length ? waitingRoomMembers.map((member) => (
-                        <li
-                          key={member.userId}
-                          className="border-b w-full flex items-center justify-between"
-                        >
-                          <div className="flex items-center justify-center space-x-2 py-2">
-                            <Avatar>
-                              <AvatarImage src={member?.profileImg} />
-                              <AvatarFallback>
-                                {member?.fullname?.charAt(0) || "U"}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div className="flex flex-col items-center justify-center">
-                              <p className="shrink-0 text-sm p-2">
-                                {member?.fullname}
-                              </p>
-                            </div>
-                          </div>
-                          <p>actions</p>
-                        </li>
-                      )): <h1>show that no users have joined</h1>}
+                      ))
+                    ) : (
+                      <h1>show that no users have joined</h1>
+                    )}
                   </ul>
                 </>
               </SheetHeader>
@@ -631,11 +570,24 @@ const [selectedMembersList, setSelectedMembersList] = useState("joinedMemberList
                   scrollBeyondLastLine: false,
                   automaticLayout: true,
                 }}
-                value={code} // ✅ Ensures state updates reflect in the editor
-                onChange={(value) => {
-                  yText.delete(0, yText.toString().length);
-                  yText.insert(0, value ?? "");
-                  localStorage.setItem("userCode", value ?? "");
+                onMount={(editor) => {
+                  const model = editor.getModel();
+                  if (!model) {
+                    console.error("❌ Monaco model not found");
+                    return;
+                  }
+
+                  try {
+                    new MonacoBinding(
+                      yText, // your Y.Text instance
+                      model, // Monaco model
+                      new Set([editor]), // All editor instances (just one here)
+                      awareness // your Awareness instance
+                    );
+                    console.log("✅ MonacoBinding applied");
+                  } catch (err) {
+                    console.error("❌ MonacoBinding failed:", err);
+                  }
                 }}
               />
             </div>
@@ -648,12 +600,18 @@ const [selectedMembersList, setSelectedMembersList] = useState("joinedMemberList
               </div>
               <div className="flex-1 overflow-y-auto p-2 text-black">
                 {output && (
-                  <SyntaxHighlighter language={selectedLanguage} style={dracula}>
+                  <SyntaxHighlighter
+                    language={selectedLanguage}
+                    style={dracula}
+                  >
                     {output}
                   </SyntaxHighlighter>
                 )}
                 {error && (
-                  <SyntaxHighlighter language={selectedLanguage} style={dracula}>
+                  <SyntaxHighlighter
+                    language={selectedLanguage}
+                    style={dracula}
+                  >
                     {error}
                   </SyntaxHighlighter>
                 )}

@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useSocket } from "@/lib/store/useSocket";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/lib/store/useUser";
+import { usePeer } from "@/lib/store/usePeer";
 
 const Page = () => {
   const { socket } = useSocket();
@@ -12,16 +13,20 @@ const Page = () => {
     null
   );
 
+  const { createAnswer, addAndGenerateCandidate } = usePeer();
+
   useEffect(() => {
     if (!socket) {
       return;
     }
 
-    socket.on("EVENT", ({ type, payload }) => {
+    socket.on("EVENT", async ({ type, payload }) => {
       switch (type) {
         case "JOIN_REQUEST_RESULT":
           try {
-            const { joinRequestAccepted, userId, roomId } = payload;
+            const { joinRequestAccepted, userId, roomId, offer } = payload;
+
+            const answer = await createAnswer(offer);
 
             if (joinRequestAccepted) {
               setJoinRequestResult(true);
@@ -32,6 +37,7 @@ const Page = () => {
                   payload: {
                     userId,
                     roomId,
+                    answer,
                   },
                 },
                 ({ message, roomId }: { message: string; roomId: string }) => {
@@ -58,6 +64,12 @@ const Page = () => {
 
           break;
 
+        case "ADMIN_CANDIDATE":
+          const {candidate, roomId, from} = payload;
+          
+          await addAndGenerateCandidate({candidate, from, roomId, socket});
+          break;
+
         default:
           break;
       }
@@ -66,7 +78,7 @@ const Page = () => {
     return () => {
       socket.off("EVENT"); // Clean up
     };
-  }, [socket, router]);
+  }, [socket, router, createAnswer, addAndGenerateCandidate]);
 
   const { user } = useUser();
 

@@ -39,7 +39,10 @@ io.on("connection", (socket) => {
           }
 
           await redis.hset(`rooms:${roomId}`, {
-            admin,
+            admin: {
+              userId: payload.userId,
+              socketId: admin,
+            },
             roomId: `rooms:${roomId}`,
             inviteCode,
             members: [
@@ -64,6 +67,66 @@ io.on("connection", (socket) => {
           console.error("Error in CREATE_ROOM:", error);
           callback({ message: "An error occurred. Please try again." });
         }
+        break;
+
+      case "REFRESH_SOCKET_ID":
+        try {
+          const { roomId, userId } = payload || {};
+
+          if (!roomId || !userId) {
+            callback({ message: "Invalid payload" });
+            return;
+          }
+
+          const room = await redis.hgetall(`rooms:${roomId}`);
+
+          if (!room) {
+            callback({ message: "Room does not exist" });
+            return;
+          }
+
+          if (room.admin.userId === userId) {
+            room.admin.socketId = socket.id;
+          }
+
+          const member = (room.members ?? []).find(
+            (member) => member?.userId === userId
+          );
+
+          if (member.socketId === socket.id) {
+            callback({ message: "Socket ID already refreshed" });
+          }
+
+          room.members = (room.members ?? []).map((member) => {
+            if (member.userId === userId) {
+              return {
+                ...member,
+                socketId: socket.id,
+              };
+            }
+            return member;
+          });
+
+          await redis.hset(`rooms:${roomId}`, room);
+
+          const waitingRoom = await redis.lrange(
+            `waitingRooms:${roomId}`,
+            0,
+            -1
+          );
+
+          if (room.admin.socketId === socket.id) {
+            callback({
+              message: "Socket ID refreshed successfully",
+              waitingRoom,
+            });
+          }
+
+          callback({ message: "Socket ID refreshed successfully" });
+        } catch (err) {
+          console.log("Error in REFRESH_SOCKET_ID:", err);
+        }
+
         break;
 
       case "REQUEST_JOIN_ROOM":
@@ -154,7 +217,7 @@ io.on("connection", (socket) => {
           );
 
           // Notify room admin
-          socket.to(requestedRoom.admin).emit("EVENT", {
+          socket.to(requestedRoom.admin.socketId).emit("EVENT", {
             type: "SEND_JOIN_REQUEST",
             payload: {
               user,
@@ -175,7 +238,7 @@ io.on("connection", (socket) => {
 
       case "ACCEPT_JOIN_REQUEST":
         try {
-          const { userId: joiningUser, roomId: joiningRoomId } = payload;
+          const { userId: joiningUser, roomId: joiningRoomId, offer } = payload;
 
           if (!joiningUser || !joiningRoomId) {
             callback({ message: "Invalid join request" });
@@ -189,7 +252,7 @@ io.on("connection", (socket) => {
             return;
           }
 
-          if (joiningRoom.admin !== socket.id) {
+          if (joiningRoom.admin.socketId !== socket.id) {
             callback({ message: "You are not the admin of this room" });
             return;
           }
@@ -231,6 +294,7 @@ io.on("connection", (socket) => {
               user: waitingUser?.user,
               userId: waitingUser?.userId,
               roomId: waitingUser?.roomId,
+              offer,
             },
           });
 
@@ -240,6 +304,63 @@ io.on("connection", (socket) => {
           callback({ message: "An error occurred. Please try again." });
         }
 
+        break;
+
+      case "SEND_ADMIN_ICE_CANDIDATE":
+        const { from, to, roomId, candidate } = payload;
+
+        if (!from || !to || !roomId || !candidate) {
+          return;
+        }
+
+        const waitingRoom = await redis.lrange(`waitingRooms:${roomId}`, 0, -1);
+
+        if (!waitingRoom?.length) {
+          return;
+        }
+
+        const waitingUser = waitingRoom?.find((user) => user?.userId === to);
+
+        if (!waitingUser) {
+          return;
+        }
+
+        socket.to(waitingUser?.user).emit("EVENT", {
+          type: "ADMIN_CANDIDATE",
+          payload: {
+            from,
+            roomId,
+            candidate,
+          },
+        });
+
+        break;
+
+      case "SEND_USER_ICE_CANDIDATE":
+        const { from: sender, roomId: userRoomId, candidate: userCandidate } = payload;
+
+        if (!sender || !userRoomId || !userCandidate) {
+          return;
+        }
+
+        const room = await redis.hgetall(`rooms:${userRoomId}`);
+
+        if (!room) {
+          return;
+        }
+
+        const admin = room?.admin?.socketId;
+
+        if(!admin) {
+          return;
+        }
+
+        socket.to(admin).emit("EVENT", {
+          type: "USER_CANDIDATE",
+          payload: {
+            candidate: userCandidate,
+          },
+        });
         break;
 
       case "REJECT_JOIN_REQUEST":
@@ -258,14 +379,11 @@ io.on("connection", (socket) => {
             return;
           }
 
-          if (joiningRoom.admin !== socket.id) {
+          if (joiningRoom.admin.socketId !== socket.id) {
             callback({ message: "You are not the admin of this room" });
             return;
           }
 
-          // i have a bug here, the user is the socket id not the actual userid from db, remove all instances of this bug thoroughly
-
-          console.log("joining user", joiningUser);
           if (
             joiningRoom.members.find((member) => member.userId === joiningUser)
           ) {
@@ -298,15 +416,20 @@ io.on("connection", (socket) => {
 
           // remove user from waiting room
 
-          const removedUser = await redis.lrem(
-            `waitingRooms:${waitingRoomId}`,
-            0,
-            JSON.stringify(waitingUser)
+          const waitingRoomWithoutRejectedUser = waitingRoom.filter(
+            (user) => user.userId !== waitingUser?.userId
           );
+          await redis.del(`waitingRooms:${waitingRoomId}`);
 
-          if (!removedUser) {
-            callback({ message: "User not found in waiting room" });
-            return;
+          if (waitingRoomWithoutRejectedUser.length > 0) {
+            const stringifiedWaitingRoomWithoutRejectedUser =
+              waitingRoomWithoutRejectedUser.map((user) =>
+                JSON.stringify(user)
+              );
+            await redis.rpush(
+              `waitingRooms:${waitingRoomId}`,
+              ...stringifiedWaitingRoomWithoutRejectedUser
+            );
           }
 
           socket.to(waitingUser?.user).emit("EVENT", {
@@ -316,7 +439,10 @@ io.on("connection", (socket) => {
             },
           });
 
-          callback({ message: "Join request rejected successfully" });
+          callback({
+            message: "Join request rejected successfully",
+            WaitingRoom: waitingRoomWithoutRejectedUser,
+          });
         } catch (error) {
           console.error("Error in REJECT_JOIN_REQUEST:", error);
           callback({ message: "An error occurred. Please try again." });
@@ -326,7 +452,11 @@ io.on("connection", (socket) => {
 
       case "JOIN_ROOM":
         try {
-          const { userId: joiningUser, roomId: joiningRoomId } = payload;
+          const {
+            userId: joiningUser,
+            roomId: joiningRoomId,
+            answer,
+          } = payload;
 
           if (!joiningUser || !joiningRoomId) {
             callback({ message: "Invalid join request" });
@@ -379,24 +509,36 @@ io.on("connection", (socket) => {
           });
 
           // Remove the user from the waiting room properly
-          const removedUser = await redis.lrem(
-            waitingRoomId,
-            0,
-            JSON.stringify(waitingUser)
+
+          const updatedWaitingRoom = waitingRoom.filter(
+            (user) => user.userId !== joiningUser
           );
 
-          if (removedUser === 0) {
-            callback({ message: "User not found in waiting room" });
-            return;
+          await redis.del(waitingRoomId);
+
+          if (updatedWaitingRoom.length > 0) {
+            const stringifiedWaitingRoom = updatedWaitingRoom.map((user) =>
+              JSON.stringify(user)
+            );
+            await redis.rpush(waitingRoomId, ...stringifiedWaitingRoom);
           }
 
           const joiningRoom = await redis.hgetall(joiningRoomId);
 
-          socket.to(joiningRoom?.admin).emit("EVENT", {
+          socket.to(joiningRoom?.admin.socketId).emit("EVENT", {
+            type: "INCOMING_ANSWER",
+            payload: {
+              message: "Incoming answer",
+              answer,
+            },
+          });
+
+          socket.to(joiningRoom?.admin.socketId).emit("EVENT", {
             type: "UPDATED_ROOM_MEMBERS",
             payload: {
               message: "Updated room members successfully",
               roomMembers: joinedRoom.members,
+              waitingRoom: updatedWaitingRoom,
             },
           });
 

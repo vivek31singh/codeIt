@@ -1,7 +1,7 @@
 import { io, Socket } from "socket.io-client";
 import { create } from "zustand";
 
-interface SocketState {
+ interface SocketState {
   socket: Socket | null;
   connect: () => void;
   disconnect: () => void;
