@@ -77,6 +77,7 @@ export const usePeer = create<PeerState>((set, get) => ({
     }
 
     const dataChannel = peer.createDataChannel("yjs-codeplayground");
+    dataChannel.binaryType = "arraybuffer";
 
     setupYjsSync(dataChannel);
     set({
@@ -106,13 +107,14 @@ export const usePeer = create<PeerState>((set, get) => ({
   createAnswer: async (offer) => {
     const { peer, adminIceCandidates } = get();
 
-    if(!peer || !offer){
-      return
+    if (!peer || !offer) {
+      return;
     }
 
     peer.ondatachannel = (event) => {
-      if(event.channel.label === "yjs-codeplayground"){
+      if (event.channel.label === "yjs-codeplayground") {
         const channel = event.channel;
+        channel.binaryType = "arraybuffer";
         set({
           dataChannel: channel,
         });
@@ -121,13 +123,13 @@ export const usePeer = create<PeerState>((set, get) => ({
           console.log("✅ DataChannel open on user side");
           setupYjsSync(channel); // 👈 hook it up to Yjs right away
         };
-    
+
         channel.onerror = (e) => console.error("❌ DataChannel error", e);
       }
-    }
+    };
 
     await peer?.setRemoteDescription(offer);
-    
+
     const answer = await peer?.createAnswer();
 
     for (const candidate of adminIceCandidates) {
@@ -141,6 +143,10 @@ export const usePeer = create<PeerState>((set, get) => ({
 
   setAnswer: async (answer) => {
     const { peer } = get();
+
+    if (!peer || !answer) {
+      return;
+    }
 
     await peer?.setRemoteDescription(answer);
   },
@@ -189,7 +195,15 @@ export const usePeer = create<PeerState>((set, get) => ({
       return;
     }
 
-    await peer.addIceCandidate(candidate);
-    return;
+    if (peer.remoteDescription === null) {
+      // The remote description is not set yet, try to add the candidate after a delay
+      setTimeout(async () => {
+        if (peer.remoteDescription !== null) {
+          await peer?.addIceCandidate(candidate);
+        }
+      }, 100);
+    } else {
+      await peer?.addIceCandidate(candidate);
+    }
   },
 }));

@@ -238,9 +238,7 @@ const Page = ({ params }: { params: { slug: string[] } }) => {
           if (!answer) {
             return;
           }
-
           await setAnswer(answer);
-
           break;
 
         case "USER_CANDIDATE":
@@ -341,7 +339,7 @@ const Page = ({ params }: { params: { slug: string[] } }) => {
   useEffect(() => {
     const observer = () => {
       const updatedText = yText.toString();
-      console.log("📝 updated code", updatedText);
+      localStorage.setItem("userCode", updatedText);
       setCode(updatedText);
     };
 
