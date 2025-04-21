@@ -70,7 +70,7 @@ interface WaitingMember
   roomId: string;
 }
 
-const Page = ({ params }: { params: { slug: string[] } }) => {
+const Page = ({ params }: { params: Promise<{ slug: string[] }> }) => {
   const router = useRouter();
   const { user } = useUser();
 
@@ -318,6 +318,10 @@ const Page = ({ params }: { params: { slug: string[] } }) => {
 
   const [selectedLanguage, setSelectedLanguage] = useState("typescript");
 
+  const toggleSelectedLanguage = (language: string) => {
+    setSelectedLanguage(language);
+  };
+
   // CODE SHARING LOGIC
 
   // ✅ Load saved code from localStorage & update Yjs
@@ -464,6 +468,20 @@ const Page = ({ params }: { params: { slug: string[] } }) => {
               </>
             )}
           </button>
+          <button
+            className={`p-2 rounded-lg ${
+              loading ? "bg-gray-400" : "bg-blue-500"
+            } text-white shadow-md flex items-center justify-center cursor-pointer px-6 py-3 text-md`}
+            onClick={() => toggleSelectedLanguage("javasscript")}
+          >
+            {loading ? (
+              "Running..."
+            ) : (
+              <>
+                <Play className="mr-1" /> Run
+              </>
+            )}
+          </button>
 
           <Sheet>
             <SheetTrigger>
@@ -472,7 +490,7 @@ const Page = ({ params }: { params: { slug: string[] } }) => {
             <SheetContent>
               <SheetHeader>
                 <SheetTitle>Room Members</SheetTitle>
-            
+
                 <>
                   <main className="flex items-center justify-start w-full border-b space-x-2">
                     <h6
