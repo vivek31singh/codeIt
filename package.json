@@ -7,6 +7,7 @@
     "dev": "concurrently \"next dev\" \"npx nodemon wsServer.js\"",
     "start": "next start",
     "ws": "npx nodemon wsServer.mjs",
+    "generate": "prisma generate",
     "build": "next build",
     "lint": "next lint"
   },
